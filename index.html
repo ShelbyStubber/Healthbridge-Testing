@@ -44,6 +44,8 @@
     animation: pulse 1.6s ease-in-out infinite;
   }
 
+  .dot.paused { animation: none; opacity: 0.35; }
+
   @keyframes pulse {
     0%, 100% { transform: scale(1); opacity: 1; }
     50% { transform: scale(2.2); opacity: 0.35; }
@@ -97,11 +99,11 @@
 <body>
 
   <div class="card">
-    <div class="dot"></div>
+    <div class="dot" id="dot"></div>
     <h1>Please wait while we extract the information from your documents</h1>
-    <p class="sub">Click the Check button below to see if it is done</p>
+    <p class="sub">This page checks automatically — you can also check manually below.</p>
 
-    <button id="checkBtn">Check</button>
+    <button id="checkBtn">Check now</button>
     <div class="status" id="status" role="status" aria-live="polite"></div>
   </div>
 
@@ -115,22 +117,41 @@
   const params = new URLSearchParams(window.location.search);
   const stubref = params.get("stubref");
 
+  // Polling configuration
+  const POLL_INTERVAL_MS = 4000;   // how often to auto-check
+  const MAX_CONSECUTIVE_ERRORS = 5; // stop auto-polling after this many failures in a row
+
   function buildEndpoint(ref) {
     return `https://webhooks.stubber.com/im/${encodeURIComponent(ref)}/check_if_document_extraction_done`;
   }
 
   const btn = document.getElementById("checkBtn");
   const statusEl = document.getElementById("status");
+  const dotEl = document.getElementById("dot");
+
+  let pollTimer = null;
+  let consecutiveErrors = 0;
+  let inFlight = false; // guards against overlapping requests
 
   function setStatus(message, isError) {
     statusEl.textContent = message || "";
     statusEl.classList.toggle("error", !!isError);
   }
 
-  // If the page was opened without a stubref, there's nothing to check.
-  if (!stubref) {
-    btn.disabled = true;
-    setStatus("This link is missing a reference and can't be checked.", true);
+  function stopPolling(pauseVisual) {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+    if (pauseVisual) {
+      dotEl.classList.add("paused");
+    }
+  }
+
+  function startPolling() {
+    if (!stubref || pollTimer) return;
+    dotEl.classList.remove("paused");
+    pollTimer = setInterval(() => checkStatus(false), POLL_INTERVAL_MS);
   }
 
   function handleResponse(data) {
@@ -138,22 +159,26 @@
     const redirectUrl = data.form_url;
 
     if (isDone && redirectUrl) {
+      stopPolling(true);
       setStatus("Done! Redirecting…", false);
       window.location.href = redirectUrl;
     } else if (isDone && !redirectUrl) {
+      stopPolling(true);
       setStatus("Processing finished, but no link was provided.", true);
     } else {
-      setStatus("Not ready yet — try again in a moment.", false);
+      setStatus("Not ready yet — checking again automatically…", false);
     }
   }
 
-  async function checkStatus() {
+  async function checkStatus(isManual) {
     if (!stubref) {
       setStatus("This link is missing a reference and can't be checked.", true);
       return;
     }
+    if (inFlight) return; // avoid overlapping calls if a manual click coincides with a poll
 
-    btn.disabled = true;
+    inFlight = true;
+    if (isManual) btn.disabled = true;
     setStatus("Checking…", false);
 
     try {
@@ -167,16 +192,53 @@
       }
 
       const data = await response.json();
+      consecutiveErrors = 0;
       handleResponse(data);
     } catch (err) {
-      setStatus("Something went wrong. Please try again.", true);
+      consecutiveErrors += 1;
       console.error(err);
+
+      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        stopPolling(true);
+        setStatus("Having trouble checking status. Tap \u201cCheck now\u201d to retry.", true);
+      } else {
+        setStatus("Something went wrong. Retrying automatically…", true);
+      }
     } finally {
-      btn.disabled = false;
+      inFlight = false;
+      if (isManual) btn.disabled = false;
     }
   }
 
-  btn.addEventListener("click", checkStatus);
+  // Manual check: also resets the error counter and restarts auto-polling
+  // in case it had stopped after repeated failures.
+  btn.addEventListener("click", () => {
+    consecutiveErrors = 0;
+    checkStatus(true);
+    if (!pollTimer) startPolling();
+  });
+
+  if (!stubref) {
+    btn.disabled = true;
+    setStatus("This link is missing a reference and can't be checked.", true);
+  } else {
+    // Kick off an immediate check, then keep polling in the background.
+    checkStatus(false);
+    startPolling();
+  }
+
+  // Pause polling when the tab isn't visible, resume when it is again —
+  // avoids hammering the endpoint from background tabs.
+  document.addEventListener("visibilitychange", () => {
+    if (!stubref) return;
+    if (document.hidden) {
+      stopPolling(true);
+    } else {
+      consecutiveErrors = 0;
+      checkStatus(false);
+      startPolling();
+    }
+  });
 </script>
 
 </body>
