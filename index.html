@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Processing your documents</title>
+<style>
+  :root {
+    --bg: #F7F6F3;
+    --ink: #1F1E1C;
+    --muted: #6B6862;
+    --accent: #3A5A78;
+    --accent-dark: #2C4459;
+    --border: #E1DED6;
+    --error: #B3432B;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    padding: 24px;
+  }
+
+  .card {
+    max-width: 440px;
+    width: 100%;
+    text-align: center;
+  }
+
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin: 0 auto 28px;
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(2.2); opacity: 0.35; }
+  }
+
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.4;
+    margin: 0 0 10px;
+  }
+
+  p.sub {
+    font-size: 15px;
+    color: var(--muted);
+    line-height: 1.5;
+    margin: 0 0 32px;
+  }
+
+  button#checkBtn {
+    appearance: none;
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    padding: 12px 28px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.1s ease;
+  }
+
+  button#checkBtn:hover { background: var(--accent-dark); }
+  button#checkBtn:active { transform: scale(0.98); }
+  button#checkBtn:disabled {
+    background: var(--border);
+    color: var(--muted);
+    cursor: not-allowed;
+  }
+
+  .status {
+    margin-top: 18px;
+    font-size: 14px;
+    min-height: 20px;
+    color: var(--muted);
+  }
+
+  .status.error { color: var(--error); }
+</style>
+</head>
+<body>
+
+  <div class="card">
+    <div class="dot"></div>
+    <h1>Please wait while we extract the information from your documents</h1>
+    <p class="sub">Click the Check button below to see if it is done</p>
+
+    <button id="checkBtn">Check</button>
+    <div class="status" id="status" role="status" aria-live="polite"></div>
+  </div>
+
+<script>
+  // ---------------------------------------------------------------------
+  // This page expects to be opened with a "stubref" query parameter, e.g.:
+  //   https://yourhost.com/check-status.html?stubref=2026-08-17-STUB-RG2B
+  // The other interface is responsible for appending that parameter when
+  // it opens this page for a given customer/stub.
+  // ---------------------------------------------------------------------
+  const params = new URLSearchParams(window.location.search);
+  const stubref = params.get("stubref");
+
+  function buildEndpoint(ref) {
+    return `https://webhooks.stubber.com/im/${encodeURIComponent(ref)}/check_if_document_extraction_done`;
+  }
+
+  const btn = document.getElementById("checkBtn");
+  const statusEl = document.getElementById("status");
+
+  function setStatus(message, isError) {
+    statusEl.textContent = message || "";
+    statusEl.classList.toggle("error", !!isError);
+  }
+
+  // If the page was opened without a stubref, there's nothing to check.
+  if (!stubref) {
+    btn.disabled = true;
+    setStatus("This link is missing a reference and can't be checked.", true);
+  }
+
+  function handleResponse(data) {
+    const isDone = data.document_extraction_complete === true;
+    const redirectUrl = data.form_url;
+
+    if (isDone && redirectUrl) {
+      setStatus("Done! Redirecting…", false);
+      window.location.href = redirectUrl;
+    } else if (isDone && !redirectUrl) {
+      setStatus("Processing finished, but no link was provided.", true);
+    } else {
+      setStatus("Not ready yet — try again in a moment.", false);
+    }
+  }
+
+  async function checkStatus() {
+    if (!stubref) {
+      setStatus("This link is missing a reference and can't be checked.", true);
+      return;
+    }
+
+    btn.disabled = true;
+    setStatus("Checking…", false);
+
+    try {
+      const response = await fetch(buildEndpoint(stubref), {
+        method: "GET",
+        headers: { "Accept": "application/json" }
+      });
+
+      if (!response.ok) {
+        throw new Error("Request failed with status " + response.status);
+      }
+
+      const data = await response.json();
+      handleResponse(data);
+    } catch (err) {
+      setStatus("Something went wrong. Please try again.", true);
+      console.error(err);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  btn.addEventListener("click", checkStatus);
+</script>
+
+</body>
+</html>
