@@ -65,27 +65,6 @@
     margin: 0 0 32px;
   }
 
-  button#checkBtn {
-    appearance: none;
-    border: none;
-    background: var(--accent);
-    color: #fff;
-    font-size: 15px;
-    font-weight: 600;
-    padding: 12px 28px;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: background 0.15s ease, transform 0.1s ease;
-  }
-
-  button#checkBtn:hover { background: var(--accent-dark); }
-  button#checkBtn:active { transform: scale(0.98); }
-  button#checkBtn:disabled {
-    background: var(--border);
-    color: var(--muted);
-    cursor: not-allowed;
-  }
-
   .status {
     margin-top: 18px;
     font-size: 14px;
@@ -101,9 +80,8 @@
   <div class="card">
     <div class="dot" id="dot"></div>
     <h1>Please wait while we extract the information from your documents</h1>
-    <p class="sub">This page checks automatically — you can also check manually below.</p>
+    <p class="sub">This page checks automatically.</p>
 
-    <button id="checkBtn">Check now</button>
     <div class="status" id="status" role="status" aria-live="polite"></div>
   </div>
 
@@ -118,19 +96,16 @@
   const stubref = params.get("stubref");
 
   // Polling configuration
-  const POLL_INTERVAL_MS = 4000;   // how often to auto-check
-  const MAX_CONSECUTIVE_ERRORS = 5; // stop auto-polling after this many failures in a row
+  const POLL_INTERVAL_MS = 4000; // how often to auto-check
 
   function buildEndpoint(ref) {
     return `https://webhooks.stubber.com/im/${encodeURIComponent(ref)}/check_if_document_extraction_done`;
   }
 
-  const btn = document.getElementById("checkBtn");
   const statusEl = document.getElementById("status");
   const dotEl = document.getElementById("dot");
 
   let pollTimer = null;
-  let consecutiveErrors = 0;
   let inFlight = false; // guards against overlapping requests
 
   function setStatus(message, isError) {
@@ -151,7 +126,7 @@
   function startPolling() {
     if (!stubref || pollTimer) return;
     dotEl.classList.remove("paused");
-    pollTimer = setInterval(() => checkStatus(false), POLL_INTERVAL_MS);
+    pollTimer = setInterval(checkStatus, POLL_INTERVAL_MS);
   }
 
   function handleResponse(data) {
@@ -170,15 +145,14 @@
     }
   }
 
-  async function checkStatus(isManual) {
+  async function checkStatus() {
     if (!stubref) {
       setStatus("This link is missing a reference and can't be checked.", true);
       return;
     }
-    if (inFlight) return; // avoid overlapping calls if a manual click coincides with a poll
+    if (inFlight) return; // avoid overlapping calls if a scheduled poll is already running
 
     inFlight = true;
-    if (isManual) btn.disabled = true;
     setStatus("Checking…", false);
 
     try {
@@ -192,38 +166,20 @@
       }
 
       const data = await response.json();
-      consecutiveErrors = 0;
       handleResponse(data);
     } catch (err) {
-      consecutiveErrors += 1;
       console.error(err);
-
-      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-        stopPolling(true);
-        setStatus("Having trouble checking status. Tap \u201cCheck now\u201d to retry.", true);
-      } else {
-        setStatus("Something went wrong. Retrying automatically…", true);
-      }
+      setStatus("Something went wrong. Retrying automatically…", true);
     } finally {
       inFlight = false;
-      if (isManual) btn.disabled = false;
     }
   }
 
-  // Manual check: also resets the error counter and restarts auto-polling
-  // in case it had stopped after repeated failures.
-  btn.addEventListener("click", () => {
-    consecutiveErrors = 0;
-    checkStatus(true);
-    if (!pollTimer) startPolling();
-  });
-
   if (!stubref) {
-    btn.disabled = true;
     setStatus("This link is missing a reference and can't be checked.", true);
   } else {
     // Kick off an immediate check, then keep polling in the background.
-    checkStatus(false);
+    checkStatus();
     startPolling();
   }
 
@@ -234,8 +190,7 @@
     if (document.hidden) {
       stopPolling(true);
     } else {
-      consecutiveErrors = 0;
-      checkStatus(false);
+      checkStatus();
       startPolling();
     }
   });
